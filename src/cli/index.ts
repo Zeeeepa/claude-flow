@@ -22,6 +22,7 @@ import { sessionCommand } from './commands/session.js';
 import { workflowCommand } from './commands/workflow.js';
 import { helpCommand } from './commands/help.js';
 import { mcpCommand } from './commands/mcp.js';
+import { ProviderCommand } from './commands/provider.js';
 import { formatError, displayBanner, displayVersion } from './formatter.js';
 import { startREPL } from './repl.js';
 import { CompletionGenerator } from './completion.js';
@@ -106,6 +107,10 @@ const completionCommand = new Command('completion')
     await generator.generate(shell || 'detect', options.install === true);
   });
 cli.addCommand(completionCommand);
+
+// Add provider command
+const providerCommandInstance = new ProviderCommand();
+cli.addCommand(providerCommandInstance.createCommand());
 
 // Global error handler
 async function handleError(error: unknown, options?: any): Promise<void> {
