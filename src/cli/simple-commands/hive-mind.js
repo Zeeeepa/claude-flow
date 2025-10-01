@@ -38,6 +38,7 @@ import { CollectiveMemory } from './hive-mind/memory.js';
 import { SwarmCommunication } from './hive-mind/communication.js';
 import { HiveMindSessionManager } from './hive-mind/session-manager.js';
 import { createAutoSaveMiddleware } from './hive-mind/auto-save-middleware.js';
+import { HiveMindMetricsReader } from './hive-mind/metrics-reader.js';
 
 function showHiveMindHelp() {
   console.log(`
@@ -56,7 +57,7 @@ ${chalk.bold('SUBCOMMANDS:')}
   ${chalk.green('consensus')}    View consensus decisions
   ${chalk.green('memory')}       Manage collective memory
   ${chalk.green('metrics')}      View performance metrics
-  ${chalk.green('wizard')}       Interactive hive mind wizard
+  ${chalk.green('wizard')}       Interactive hive mind wizard with Claude Code spawning
 
 ${chalk.bold('EXAMPLES:')}
   ${chalk.gray('# Initialize hive mind')}
@@ -71,7 +72,7 @@ ${chalk.bold('EXAMPLES:')}
   ${chalk.gray('# View current status')}
   claude-flow hive-mind status
 
-  ${chalk.gray('# Interactive wizard')}
+  ${chalk.gray('# Interactive wizard with Claude Code spawning')}
   claude-flow hive-mind wizard
 
   ${chalk.gray('# Spawn with Claude Code coordination')}
@@ -401,10 +402,16 @@ async function spawnSwarmWizard() {
       message: 'Launch monitoring dashboard?',
       default: true,
     },
+    {
+      type: 'confirm',
+      name: 'spawnClaude',
+      message: 'Spawn Claude Code instance with hive-mind coordination?',
+      default: true,
+    },
   ]);
 
   // Spawn the swarm with collected parameters
-  await spawnSwarm([answers.objective], {
+  const swarmResult = await spawnSwarm([answers.objective], {
     name: answers.name,
     queenType: answers.queenType,
     'queen-type': answers.queenType,
@@ -417,7 +424,42 @@ async function spawnSwarmWizard() {
     monitor: answers.monitor,
     namespace: answers.namespace || 'default',
     verbose: answers.verbose || false,
+    spawnClaude: answers.spawnClaude, // Pass the Claude spawning preference
   });
+
+  // If Claude Code spawning was requested, launch it using the same function as --claude flag
+  if (answers.spawnClaude && swarmResult && swarmResult.swarmId) {
+    // Create workers array in the same format expected by spawnClaudeCodeInstances
+    const workers = answers.workerTypes.map((type, index) => ({
+      id: `worker-${index + 1}`,
+      type,
+      role: 'worker',
+      status: 'active',
+      capabilities: getAgentCapabilities(type)
+    }));
+    
+    // Create flags object with the wizard settings
+    const claudeFlags = {
+      queenType: answers.queenType,
+      consensus: answers.consensusAlgorithm,
+      autoScale: answers.autoScale,
+      monitor: answers.monitor,
+      namespace: answers.namespace || 'default',
+      verbose: answers.verbose || false
+    };
+    
+    // Use the same Claude spawning function as the --claude flag
+    console.log(chalk.cyan(`\n🎯 Objective from wizard: "${answers.objective}"`));
+    await spawnClaudeCodeInstances(
+      swarmResult.swarmId,
+      answers.name,
+      answers.objective,
+      workers,
+      claudeFlags
+    );
+  }
+  
+  return swarmResult;
 }
 
 /**
@@ -596,6 +638,44 @@ async function spawnSwarm(args, flags) {
         confidence REAL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (swarm_id) REFERENCES swarms(id)
+      );
+      
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        swarm_id TEXT NOT NULL,
+        swarm_name TEXT NOT NULL,
+        objective TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        paused_at DATETIME,
+        resumed_at DATETIME,
+        completion_percentage REAL DEFAULT 0,
+        checkpoint_data TEXT,
+        metadata TEXT,
+        parent_pid INTEGER,
+        child_pids TEXT,
+        FOREIGN KEY (swarm_id) REFERENCES swarms(id)
+      );
+      
+      CREATE TABLE IF NOT EXISTS session_checkpoints (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        checkpoint_name TEXT NOT NULL,
+        checkpoint_data TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      );
+      
+      CREATE TABLE IF NOT EXISTS session_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        log_level TEXT DEFAULT 'info',
+        message TEXT,
+        agent_id TEXT,
+        data TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
       );
     `);
       spinner.text = 'Database schema created successfully';
@@ -836,6 +916,9 @@ async function spawnSwarm(args, flags) {
       );
       console.log(chalk.gray('   claude-flow hive-mind spawn "objective" --claude'));
     }
+
+    // Return swarm info for wizard use
+    return { swarmId, hiveMind };
   } catch (error) {
     spinner.fail('Failed to spawn Hive Mind swarm');
     console.error(chalk.red('Error:'), error.message);
@@ -887,22 +970,13 @@ async function showStatus(flags) {
       return;
     }
 
-    const db = new Database(dbPath);
-
-    // Get active swarms
-    const swarms = db
-      .prepare(
-        `
-      SELECT * FROM swarms 
-      WHERE status = 'active' 
-      ORDER BY created_at DESC
-    `,
-      )
-      .all();
+    // Use the metrics reader for real data
+    const metricsReader = new HiveMindMetricsReader(dbPath);
+    const swarms = metricsReader.getActiveSwarms();
 
     if (swarms.length === 0) {
       console.log(chalk.gray('No active swarms found'));
-      db.close();
+      metricsReader.close();
       return;
     }
 
@@ -916,85 +990,62 @@ async function showStatus(flags) {
       console.log(chalk.cyan('Queen Type:'), swarm.queen_type);
       console.log(chalk.cyan('Status:'), chalk.green(swarm.status));
       console.log(chalk.cyan('Created:'), new Date(swarm.created_at).toLocaleString());
-
-      // Get agents
-      const agents = db
-        .prepare(
-          `
-        SELECT * FROM agents 
-        WHERE swarm_id = ?
-      `,
-        )
-        .all(swarm.id);
+      
+      // Show real agent count
+      console.log(chalk.cyan('Total Agents:'), swarm.agent_count || 0);
 
       console.log('\n' + chalk.bold('Agents:'));
 
-      // Group by role
+      // Group by role using real agent data
+      const agents = swarm.agents || [];
       const queen = agents.find((a) => a.role === 'queen');
       const workers = agents.filter((a) => a.role === 'worker');
 
       if (queen) {
         console.log('  ' + chalk.magenta('👑 Queen:'), queen.name, chalk.gray(`(${queen.status})`));
+      } else {
+        console.log('  ' + chalk.gray('No queen assigned yet'));
       }
 
       console.log('  ' + chalk.blue('🐝 Workers:'));
-      workers.forEach((worker) => {
-        const statusColor =
-          worker.status === 'active' ? 'green' : worker.status === 'busy' ? 'yellow' : 'gray';
-        console.log(`    - ${worker.name} (${worker.type}) ${chalk[statusColor](worker.status)}`);
-      });
+      if (workers.length > 0) {
+        workers.forEach((worker) => {
+          const statusColor =
+            worker.status === 'active' ? 'green' : worker.status === 'busy' ? 'yellow' : 'gray';
+          console.log(`    - ${worker.name} (${worker.type}) ${chalk[statusColor](worker.status)}`);
+        });
+      } else {
+        console.log('    ' + chalk.gray('No workers spawned yet'));
+      }
 
-      // Get task statistics
-      const taskStats = db
-        .prepare(
-          `
-        SELECT 
-          COUNT(*) as total,
-          SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-          SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
-        FROM tasks
-        WHERE swarm_id = ?
-      `,
-        )
-        .get(swarm.id);
+      // Get real task statistics
+      const taskStats = swarm.task_metrics || {
+        total: 0,
+        completed: 0,
+        in_progress: 0,
+        pending: 0,
+        failed: 0
+      };
 
       console.log('\n' + chalk.bold('Tasks:'));
       console.log(`  Total: ${taskStats.total}`);
-      console.log(`  Completed: ${chalk.green(taskStats.completed)}`);
-      console.log(`  In Progress: ${chalk.yellow(taskStats.in_progress)}`);
-      console.log(`  Pending: ${chalk.gray(taskStats.pending)}`);
+      console.log(`  Completed: ${chalk.green(taskStats.completed || 0)}`);
+      console.log(`  In Progress: ${chalk.yellow(taskStats.in_progress || 0)}`);
+      console.log(`  Pending: ${chalk.gray(taskStats.pending || 0)}`);
+      console.log(`  ${chalk.bold('Completion:')} ${swarm.completion_percentage || 0}%`);
 
-      // Get memory stats
-      const memoryCount = db
-        .prepare(
-          `
-        SELECT COUNT(*) as count FROM collective_memory
-        WHERE swarm_id = ?
-      `,
-        )
-        .get(swarm.id);
-
+      // Show real memory count
       console.log('\n' + chalk.bold('Collective Memory:'));
-      console.log(`  Entries: ${memoryCount.count}`);
+      console.log(`  Entries: ${swarm.memory_count || 0}`);
 
-      // Get consensus stats
-      const consensusCount = db
-        .prepare(
-          `
-        SELECT COUNT(*) as count FROM consensus_decisions
-        WHERE swarm_id = ?
-      `,
-        )
-        .get(swarm.id);
-
+      // Show real consensus count
       console.log('\n' + chalk.bold('Consensus Decisions:'));
-      console.log(`  Total: ${consensusCount.count}`);
+      console.log(`  Total: ${swarm.consensus_count || 0}`);
     }
 
     console.log(chalk.yellow('═'.repeat(60)) + '\n');
 
-    db.close();
+    metricsReader.close();
   } catch (error) {
     console.error(chalk.red('Error:'), error.message);
     exit(1);
@@ -2001,6 +2052,19 @@ async function spawnClaudeCodeInstances(swarmId, swarmName, objective, workers, 
       }
 
       if (claudeAvailable && !flags.dryRun) {
+        // Inject memory coordination protocol into CLAUDE.md
+        try {
+          const { injectMemoryProtocol, enhanceHiveMindPrompt } = await import('./inject-memory-protocol.js');
+          await injectMemoryProtocol();
+          
+          // Enhance the prompt with memory coordination instructions
+          hiveMindPrompt = enhanceHiveMindPrompt(hiveMindPrompt, workers);
+          console.log(chalk.green('📝 Memory coordination protocol injected into CLAUDE.md'));
+        } catch (err) {
+          // If injection module not available, continue with original prompt
+          console.log(chalk.yellow('⚠️  Memory protocol injection not available, using standard prompt'));
+        }
+        
         // Check if we should run in non-interactive mode
         // Respect --non-interactive flag regardless of --claude
         const isNonInteractive = flags['non-interactive'] || flags.nonInteractive;
@@ -2170,6 +2234,7 @@ async function spawnClaudeCodeInstances(swarmId, swarmName, objective, workers, 
  * Generate comprehensive Hive Mind prompt for Claude Code
  */
 function generateHiveMindPrompt(swarmId, swarmName, objective, workers, workerGroups, flags) {
+  console.log(chalk.cyan(`\n🔍 generateHiveMindPrompt received objective: "${objective}"`));
   const currentTime = new Date().toISOString();
   const workerTypes = Object.keys(workerGroups);
   const queenType = flags.queenType || 'strategic';
@@ -2228,13 +2293,30 @@ ${workerTypes.map((type) => `• ${type}: ${workerGroups[type].length} agents`).
 
 As the Queen coordinator, you must:
 
-1. **INITIALIZE THE HIVE** (Single BatchTool Message):
-   [BatchTool]:
+1. **INITIALIZE THE HIVE** (CRITICAL: Use Claude Code's Task Tool for Agents):
+   
+   Step 1: Optional MCP Coordination Setup (Single Message):
+   [MCP Tools - Coordination Only]:
    ${workerTypes.map((type) => `   mcp__claude-flow__agent_spawn { "type": "${type}", "count": ${workerGroups[type].length} }`).join('\n')}
    mcp__claude-flow__memory_store { "key": "hive/objective", "value": "${objective}" }
    mcp__claude-flow__memory_store { "key": "hive/queen", "value": "${queenType}" }
    mcp__claude-flow__swarm_think { "topic": "initial_strategy" }
-   TodoWrite { "todos": [/* Create 5-10 high-level tasks */] }
+   
+   Step 2: REQUIRED - Spawn ACTUAL Agents with Claude Code's Task Tool (Single Message):
+   [Claude Code Task Tool - CONCURRENT Agent Execution]:
+   ${workerTypes.map((type) => `   Task("${type.charAt(0).toUpperCase() + type.slice(1)} Agent", "You are a ${type} in the hive. Coordinate via hooks. ${getWorkerTypeInstructions(type).split('\n')[0]}", "${type}")`).join('\n')}
+   
+   Step 3: Batch ALL Todos Together (Single TodoWrite Call):
+   TodoWrite { "todos": [
+     { "id": "1", "content": "Initialize hive mind collective", "status": "in_progress", "priority": "high" },
+     { "id": "2", "content": "Establish consensus protocols", "status": "pending", "priority": "high" },
+     { "id": "3", "content": "Distribute initial tasks to workers", "status": "pending", "priority": "high" },
+     { "id": "4", "content": "Set up collective memory", "status": "pending", "priority": "high" },
+     { "id": "5", "content": "Monitor worker health", "status": "pending", "priority": "medium" },
+     { "id": "6", "content": "Aggregate worker outputs", "status": "pending", "priority": "medium" },
+     { "id": "7", "content": "Learn from patterns", "status": "pending", "priority": "low" },
+     { "id": "8", "content": "Optimize performance", "status": "pending", "priority": "low" }
+   ] }
 
 2. **ESTABLISH COLLECTIVE INTELLIGENCE**:
    - Use consensus_vote for major decisions
@@ -2322,12 +2404,30 @@ For the objective: "${objective}"
 5. Aggregate and synthesize all worker outputs
 6. Deliver comprehensive solution with consensus
 
-⚡ PARALLEL EXECUTION REMINDER:
-The Hive Mind operates with massive parallelism. Always batch operations:
-- Spawn ALL workers in one message
-- Create ALL initial tasks together
+⚡ CRITICAL: CONCURRENT EXECUTION WITH CLAUDE CODE'S TASK TOOL:
+
+The Hive Mind MUST use Claude Code's Task tool for actual agent execution:
+
+✅ CORRECT Pattern:
+[Single Message - All Agents Spawned Concurrently]:
+  Task("Researcher", "Research patterns and best practices...", "researcher")
+  Task("Coder", "Implement core features...", "coder")
+  Task("Tester", "Create comprehensive tests...", "tester")
+  Task("Analyst", "Analyze performance metrics...", "analyst")
+  TodoWrite { todos: [8-10 todos ALL in ONE call] }
+
+❌ WRONG Pattern:
+Message 1: Task("agent1", ...)
+Message 2: Task("agent2", ...)
+Message 3: TodoWrite { single todo }
+// This breaks parallel coordination!
+
+Remember:
+- Use Claude Code's Task tool to spawn ALL agents in ONE message
+- MCP tools are ONLY for coordination setup, not agent execution
+- Batch ALL TodoWrite operations (5-10+ todos minimum)
+- Execute ALL file operations concurrently
 - Store multiple memories simultaneously
-- Check all statuses in parallel
 
 🚀 BEGIN HIVE MIND EXECUTION:
 
@@ -2500,12 +2600,20 @@ function getWorkerTypeInstructions(workerType) {
  */
 async function showSessions(flags) {
   try {
-    const sessionManager = new HiveMindSessionManager();
-    const sessions = await sessionManager.getActiveSessions();
+    // Use metrics reader for real session data
+    const dbPath = path.join(cwd(), '.hive-mind', 'hive.db');
+    
+    if (!existsSync(dbPath)) {
+      console.log(chalk.gray('No hive mind database found'));
+      return;
+    }
+    
+    const metricsReader = new HiveMindMetricsReader(dbPath);
+    const sessions = metricsReader.getActiveSessions();
 
     if (sessions.length === 0) {
       console.log(chalk.gray('No active or paused sessions found'));
-      sessionManager.close();
+      metricsReader.close();
       return;
     }
 
@@ -2518,11 +2626,11 @@ async function showSessions(flags) {
         session.status === 'active' ? '🟢' : session.status === 'paused' ? '🟡' : '⚫';
 
       console.log(chalk.yellow('═'.repeat(60)));
-      console.log(`${statusIcon} ${chalk.bold(session.swarm_name)}`);
+      console.log(`${statusIcon} ${chalk.bold(session.swarm_name || session.id)}`);
       console.log(chalk.cyan('Session ID:'), session.id);
       console.log(chalk.cyan('Status:'), chalk[statusColor](session.status));
-      console.log(chalk.cyan('Objective:'), session.objective);
-      console.log(chalk.cyan('Progress:'), `${session.completion_percentage}%`);
+      console.log(chalk.cyan('Objective:'), session.objective || 'Not set');
+      console.log(chalk.cyan('Progress:'), `${session.completion_percentage || 0}%`);
       console.log(chalk.cyan('Created:'), new Date(session.created_at).toLocaleString());
       console.log(chalk.cyan('Last Updated:'), new Date(session.updated_at).toLocaleString());
 
@@ -2530,14 +2638,19 @@ async function showSessions(flags) {
         console.log(chalk.cyan('Paused At:'), new Date(session.paused_at).toLocaleString());
       }
 
-      console.log('\n' + chalk.bold('Progress:'));
+      console.log('\n' + chalk.bold('Real Progress:'));
       console.log(`  Agents: ${session.agent_count || 0}`);
       console.log(`  Tasks: ${session.completed_tasks || 0}/${session.task_count || 0}`);
+      console.log(`  In Progress: ${session.in_progress_tasks || 0}`);
+      console.log(`  Pending: ${session.pending_tasks || 0}`);
 
       if (session.checkpoint_data) {
         console.log('\n' + chalk.bold('Last Checkpoint:'));
+        const checkpointStr = typeof session.checkpoint_data === 'string' 
+          ? session.checkpoint_data 
+          : JSON.stringify(session.checkpoint_data, null, 2);
         console.log(
-          chalk.gray(JSON.stringify(session.checkpoint_data, null, 2).substring(0, 200) + '...'),
+          chalk.gray(checkpointStr.substring(0, 200) + (checkpointStr.length > 200 ? '...' : '')),
         );
       }
     });
@@ -2548,7 +2661,7 @@ async function showSessions(flags) {
     console.log('  • Resume a session: claude-flow hive-mind resume <session-id>');
     console.log('  • View session details: claude-flow hive-mind status');
 
-    sessionManager.close();
+    metricsReader.close();
   } catch (error) {
     console.error(chalk.red('Error:'), error.message);
     exit(1);

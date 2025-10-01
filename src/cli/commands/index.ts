@@ -15,6 +15,7 @@ import { SimpleMemoryManager } from './memory.js';
 import { sparcAction } from './sparc.js';
 import { createMigrateCommand } from './migrate.js';
 import { enterpriseCommands } from './enterprise.js';
+import { createFlowNexusClaudeMd } from '../simple-commands/init/templates/claude-md.js';
 
 // Import enhanced orchestration commands
 import { startCommand } from './start.js';
@@ -53,6 +54,74 @@ async function getConfigManager(): Promise<ConfigManager> {
 }
 
 export function setupCommands(cli: CLI): void {
+  // Neural init command
+  cli.command({
+    name: 'neural',
+    description: 'Neural module management',
+    subcommands: [
+      {
+        name: 'init',
+        description: 'Initialize SAFLA neural module',
+        options: [
+          {
+            name: 'force',
+            short: 'f',
+            description: 'Overwrite existing module',
+            type: 'boolean',
+          },
+          {
+            name: 'target',
+            short: 't',
+            description: 'Target directory',
+            type: 'string',
+            defaultValue: '.claude/agents/neural',
+          },
+        ],
+        action: async (ctx: CommandContext) => {
+          const { initNeuralModule } = await import('../../scripts/init-neural.js');
+          await initNeuralModule({
+            force: ctx.flags.force as boolean,
+            targetDir: ctx.flags.target as string,
+          });
+        },
+      },
+    ],
+  });
+
+  // Goal init command
+  cli.command({
+    name: 'goal',
+    description: 'Goal module management',
+    subcommands: [
+      {
+        name: 'init',
+        description: 'Initialize GOAP goal module',
+        options: [
+          {
+            name: 'force',
+            short: 'f',
+            description: 'Overwrite existing module',
+            type: 'boolean',
+          },
+          {
+            name: 'target',
+            short: 't',
+            description: 'Target directory',
+            type: 'string',
+            defaultValue: '.claude/agents/goal',
+          },
+        ],
+        action: async (ctx: CommandContext) => {
+          const { initGoalModule } = await import('../../scripts/init-goal.js');
+          await initGoalModule({
+            force: ctx.flags.force as boolean,
+            targetDir: ctx.flags.target as string,
+          });
+        },
+      },
+    ],
+  });
+
   // Init command
   cli.command({
     name: 'init',
@@ -70,6 +139,11 @@ export function setupCommands(cli: CLI): void {
         description: 'Create minimal configuration files',
         type: 'boolean',
       },
+      {
+        name: 'flow-nexus',
+        description: 'Initialize with Flow Nexus commands, agents, and CLAUDE.md only',
+        type: 'boolean',
+      },
     ],
     action: async (ctx: CommandContext) => {
       try {
@@ -77,8 +151,33 @@ export function setupCommands(cli: CLI): void {
 
         const force = (ctx.flags.force as boolean) || (ctx.flags.f as boolean);
         const minimal = (ctx.flags.minimal as boolean) || (ctx.flags.m as boolean);
+        const flowNexus = ctx.flags['flow-nexus'] as boolean;
 
-        // Check if files already exist
+        // Handle Flow Nexus minimal init
+        if (flowNexus) {
+          success('Initializing Flow Nexus minimal setup...');
+          
+          // Create Flow Nexus CLAUDE.md with integrated section
+          const flowNexusClaudeMd = createFlowNexusClaudeMd();
+          const { writeFile, mkdir } = await import('fs/promises');
+          await writeFile('CLAUDE.md', flowNexusClaudeMd);
+          console.log('  ✓ Created CLAUDE.md with Flow Nexus integration');
+          
+          // Create .claude/commands/flow-nexus directory and copy commands
+          await mkdir('.claude/commands/flow-nexus', { recursive: true });
+          
+          // Create .claude/agents/flow-nexus directory and copy agents
+          await mkdir('.claude/agents/flow-nexus', { recursive: true });
+          
+          success('Flow Nexus initialization complete!');
+          console.log('📚 Created: CLAUDE.md with Flow Nexus documentation');
+          console.log('📁 Created: .claude/commands/flow-nexus/ directory structure');  
+          console.log('🤖 Created: .claude/agents/flow-nexus/ directory structure');
+          console.log('💡 Use MCP Flow Nexus tools in Claude Code for full functionality');
+          return;
+        }
+
+        // Check if files already exist for full init
         const files = ['CLAUDE.md', 'memory-bank.md', 'coordination.md'];
         const existingFiles = [];
 
@@ -2481,6 +2580,7 @@ This is a Claude-Flow AI agent orchestration system.
 `;
 }
 
+
 function createFullClaudeMd(): string {
   return `# Claude Code Configuration
 
@@ -2531,6 +2631,7 @@ This is a Claude-Flow AI agent orchestration system with the following component
 `;
 }
 
+
 function createMinimalMemoryBankMd(): string {
   return `# Memory Bank
 
@@ -2544,6 +2645,7 @@ function createMinimalMemoryBankMd(): string {
 - Sessions: \`./memory/sessions/\`
 `;
 }
+
 
 function createFullMemoryBankMd(): string {
   return `# Memory Bank Configuration
@@ -2607,6 +2709,7 @@ Memory settings are configured in \`claude-flow.config.json\`:
 `;
 }
 
+
 function createMinimalCoordinationMd(): string {
   return `# Agent Coordination
 
@@ -2619,6 +2722,7 @@ function createMinimalCoordinationMd(): string {
 - researcher, coder, analyst, coordinator, general
 `;
 }
+
 
 function createFullCoordinationMd(): string {
   return `# Agent Coordination System
@@ -2712,6 +2816,7 @@ Coordination settings in \`claude-flow.config.json\`:
 `;
 }
 
+
 function createAgentsReadme(): string {
   return `# Agent Memory Storage
 
@@ -2746,6 +2851,7 @@ memory/agents/
 ${new Date().toISOString()}
 `;
 }
+
 
 function createSessionsReadme(): string {
   return `# Session Memory Storage
@@ -2782,3 +2888,4 @@ memory/sessions/
 ${new Date().toISOString()}
 `;
 }
+
