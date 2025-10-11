@@ -1,10 +1,10 @@
-# 🌊 Claude-Flow v2.5.0 Alpha 130: AI Orchestration Platform
+# 🌊 Claude-Flow v2.5.0 Alpha 140: AI Orchestration Platform
 
 <div align="center">
 
 [![🌟 Star on GitHub](https://img.shields.io/github/stars/ruvnet/claude-flow?style=for-the-badge&logo=github&color=gold)](https://github.com/ruvnet/claude-flow)
 [![📈 Downloads](https://img.shields.io/npm/dt/claude-flow?style=for-the-badge&logo=npm&color=blue&label=Downloads)](https://www.npmjs.com/package/claude-flow)
-[![📦 Latest Release](https://img.shields.io/npm/v/claude-flow?style=for-the-badge&logo=npm&color=green&label=v2.5.0-alpha.130)](https://www.npmjs.com/package/claude-flow)
+[![📦 Latest Release](https://img.shields.io/npm/v/claude-flow?style=for-the-badge&logo=npm&color=green&label=v2.5.0-alpha.140)](https://www.npmjs.com/package/claude-flow)
 [![⚡ Claude Code](https://img.shields.io/badge/Claude%20Code-SDK%20Integrated-green?style=for-the-badge&logo=anthropic)](https://github.com/ruvnet/claude-flow)
 [![🏛️ Agentics Foundation](https://img.shields.io/badge/Agentics-Foundation-crimson?style=for-the-badge&logo=openai)](https://discord.com/invite/dfxmpwkG2D)
 [![🐝 Hive-Mind](https://img.shields.io/badge/Hive--Mind-AI%20Coordination-purple?style=for-the-badge&logo=swarm)](https://github.com/ruvnet/claude-flow)
@@ -12,57 +12,6 @@
 [![🛡️ MIT License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=opensourceinitiative)](https://opensource.org/licenses/MIT)
 
 </div>
-
----
-
-## 🎉 What's New in v2.5.0-alpha.130
-
-**🚀 Claude Code SDK Integration** - Major performance breakthrough with 100-600x potential speedup!
-
-### ✨ New Features
-
-**Session Forking & Real-Time Control** 🔥
-- ⚡ **10-20x faster** parallel agent spawning using Claude Code SDK's session forking
-- 🎮 Real-time query control: pause, resume, terminate agents mid-execution
-- 🔄 Dynamic model and permission changes during runtime
-- 📊 26 new methods for advanced agent orchestration
-
-**Hook Matchers & 4-Level Permissions** 🎯
-- 🎨 **2-3x faster** hook execution with pattern-based selective triggering
-- 🔐 Hierarchical permission system: USER → PROJECT → LOCAL → SESSION
-- 🔍 Glob and regex pattern matching for file-based hooks
-- ⚡ Intelligent caching for near-instant permission resolution
-
-**In-Process MCP Server** 🚄
-- 🏎️ **50-100x faster** tool calls by eliminating IPC overhead
-- 📦 Direct in-process execution for all 50+ Claude-Flow tools
-- 💾 10MB memory savings per MCP server (no extra processes)
-- 🔌 Automatic routing: in-process for local tools, stdio/SSE for external
-
-
-
-### 📊 Performance Impact
-
-| Feature | Speedup | Impact |
-|---------|---------|--------|
-| Session Forking | 10-20x | Parallel agent spawning |
-| Hook Matchers | 2-3x | Selective hook execution |
-| In-Process MCP | 50-100x | Tool call latency |
-| **Combined** | **100-600x** | Full workflow orchestration |
-
-**Real-World Example**: Spawning 10 agents now takes ~750ms instead of ~7,500ms! 🚀
-
-### 🔧 SDK Integration Benefits
-
-- ✅ Native Claude Code SDK features instead of custom implementations
-- ✅ Automatic retry handling and error management
-- ✅ Optimized streaming and artifact durability
-- ✅ Context checkpoints and session management
-- ✅ Reduced codebase by 200+ lines of redundant retry logic
-
-**See Full Details**: [GitHub Issue #780](https://github.com/ruvnet/claude-flow/issues/780)
-
----
 
 ## 🌟 **Overview**
 
@@ -78,8 +27,40 @@
 - **🪝 Advanced Hooks System**: Automated workflows with pre/post operation hooks
 - **📊 GitHub Integration**: 6 specialized modes for repository management
 - **🌐 Flow Nexus Cloud Platform**: E2B sandboxes, AI swarms, challenges, and marketplace integration
+- **🎯 PreToolUse Modification Hooks**: NEW - Claude Code v2.0.10+ intelligent input modification (safety, organization, optimization)
 
 > 🔥 **Revolutionary AI Coordination**: Build faster, smarter, and more efficiently with AI-powered development orchestration
+
+## 🎯 **NEW: PreToolUse Modification Hooks Plugin** (v2.5.0-alpha.140)
+
+**First Claude Code plugin with intelligent tool input modification** - automatically enhances commands and files before execution.
+
+**Key Features:**
+- 🛡️ **Safety**: Auto-adds `-i` to `rm` commands, detects sensitive keywords
+- 📁 **Organization**: Auto-routes files (tests→`/tests/`, src→`/src/`)
+- ⚡ **Productivity**: Alias expansion (`ll`→`ls -lah`), conventional commits
+
+**Quick Start:**
+
+**Option 1: Direct Plugin Installation** (Recommended)
+```bash
+# In Claude Code, run:
+/plugin ruvnet/claude-flow
+```
+
+**Option 2: Via NPM**
+```bash
+npx claude-flow@alpha init --force  # Auto-configures .claude-plugin/hooks/hooks.json
+```
+
+**Examples:**
+```bash
+rm test.txt          → rm -i test.txt           # Safety
+test.js             → src/test.js              # Organization
+git commit -m "fix" → [fix] fix + co-author   # Commits
+```
+
+> 📚 **Docs**: [HOOKS-V2-MODIFICATION.md](./docs/HOOKS-V2-MODIFICATION.md) | **Plugin**: `.claude-plugin/` | **Composable** with `agent-booster`
 
 ## 🌐 **Flow Nexus Cloud Platform**
 
@@ -116,11 +97,18 @@ claude --dangerously-skip-permissions
 
 ### 🎯 **Instant Alpha Testing**
 
+**Method 1: Plugin Installation** (Easiest - includes PreToolUse hooks!)
+```bash
+# In Claude Code:
+/plugin ruvnet/claude-flow
+```
+
+**Method 2: NPM Installation** (For MCP server + CLI)
 ```bash
 # 1. Initialize Claude Flow with enhanced MCP setup (auto-configures permissions!)
 npx claude-flow@alpha init --force
 
-# 2. Explore all revolutionary capabilities  
+# 2. Explore all revolutionary capabilities
 npx claude-flow@alpha --help
 
 # 3a. Quick AI coordination (recommended for most tasks)
@@ -347,6 +335,13 @@ For detailed information about all features, advanced usage, and comprehensive g
 
 ---
 
+### 📊 Targets (Month 12)
+- 5K+ GitHub stars, 50K npm downloads/month
+- $25K MRR, 15 enterprise customers
+- 90%+ error prevention, 30+ min saved/dev/week
+
+---
+
 ## Star History
 
 <a href="https://www.star-history.com/#ruvnet/claude-flow&Date">
@@ -361,6 +356,6 @@ For detailed information about all features, advanced usage, and comprehensive g
 
 **Built with ❤️ by [rUv](https://github.com/ruvnet) | Powered by Revolutionary AI**
 
-*v2.0.0 Alpha - The Future of AI Orchestration*
+*v2.5.0-alpha.140 - The Future of AI Orchestration with PreToolUse Modification Hooks*
 
 </div>
