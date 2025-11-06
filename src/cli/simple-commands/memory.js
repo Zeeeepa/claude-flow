@@ -418,14 +418,41 @@ async function detectMemoryMode(flags, subArgs) {
   // Not initialized yet - try to auto-initialize on first use
   try {
     const { initializeReasoningBank } = await import('../../reasoningbank/reasoningbank-adapter.js');
-    await initializeReasoningBank();
+    const initialized = await initializeReasoningBank();
+
+    // Check if initialization succeeded (returns true) or failed (returns false)
+    if (!initialized) {
+      // Initialization failed but didn't throw - fall back to JSON
+      const isNpx = process.env.npm_config_user_agent?.includes('npx') ||
+                    process.cwd().includes('_npx');
+      if (isNpx) {
+        console.log('\n✅ Automatically using JSON fallback for this command\n');
+      } else {
+        printWarning(`⚠️  SQLite unavailable, using JSON fallback`);
+      }
+      return 'basic';
+    }
+
     printInfo('🗄️  Initialized SQLite backend (.swarm/memory.db)');
     return 'reasoningbank';
   } catch (error) {
     // SQLite initialization failed - fall back to JSON
-    printWarning(`⚠️  SQLite unavailable, using JSON fallback`);
-    printWarning(`   Reason: ${error.message}`);
-    return 'basic';
+    const isSqliteError = error.message?.includes('BetterSqlite3') ||
+                          error.message?.includes('better-sqlite3') ||
+                          error.message?.includes('could not run migrations') ||
+                          error.message?.includes('ReasoningBank initialization failed');
+    const isNpx = process.env.npm_config_user_agent?.includes('npx') ||
+                  process.cwd().includes('_npx');
+
+    if (isSqliteError && isNpx) {
+      // Silent fallback for npx - error already shown by adapter
+      console.log('\n✅ Automatically using JSON fallback for this command\n');
+      return 'basic';
+    } else {
+      printWarning(`⚠️  SQLite unavailable, using JSON fallback`);
+      printWarning(`   Reason: ${error.message}`);
+      return 'basic';
+    }
   }
 }
 
@@ -867,6 +894,9 @@ function showMemoryHelp() {
   console.log('Options:');
   console.log('  --namespace <ns>       Specify namespace for operations');
   console.log('  --ns <ns>              Short form of --namespace');
+  console.log('  --limit <n>            Limit number of results (default: 10)');
+  console.log('  --sort <field>         Sort results by: recent, oldest, key, value');
+  console.log('  --format <type>        Export format: json, yaml');
   console.log('  --redact               🔒 Enable API key redaction (security feature)');
   console.log('  --secure               Alias for --redact');
   console.log();
@@ -891,7 +921,9 @@ function showMemoryHelp() {
   console.log('  # ReasoningBank mode (AI-powered, opt-in)');
   console.log('  memory init --reasoningbank  # One-time setup');
   console.log('  memory store api_pattern "Always use env vars" --reasoningbank');
-  console.log('  memory query "API configuration" --reasoningbank  # Semantic search!');
+  console.log('  memory query "API configuration" --reasoningbank --limit 5  # Semantic search!');
+  console.log('  memory list --reasoningbank --sort recent --limit 20');
+  console.log('  memory export backup.json --format json --reasoningbank');
   console.log('  memory status --reasoningbank  # Show AI metrics');
   console.log();
   console.log('  # Auto-detect mode (smart selection)');
@@ -907,4 +939,14 @@ function showMemoryHelp() {
   console.log('  • JSON fallback: Always available, fast, simple key-value storage');
   console.log('  • Initialize ReasoningBank once: "memory init --reasoningbank"');
   console.log('  • Always use --redact when storing API keys or secrets!');
+  console.log();
+  console.log('🚀 Semantic Search (NEW in v2.7.25):');
+  console.log('  NPX Mode:              Uses hash-based embeddings (text similarity)');
+  console.log('                         • Fast, offline, zero dependencies');
+  console.log('                         • Good for exact/partial text matching');
+  console.log('  Local Install:         Uses transformer embeddings (semantic AI)');
+  console.log('                         • Finds conceptually related content');
+  console.log('                         • 384-dimensional vectors (Xenova/all-MiniLM-L6-v2)');
+  console.log('                         • Install: npm install -g claude-flow@alpha');
+  console.log('  Both modes work perfectly - choose based on your needs!');
 }
